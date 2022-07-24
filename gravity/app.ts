@@ -21,6 +21,7 @@ class BodyParameters implements IParameters
 		this.movement = movement;
 	}
 }
+
 class ReadonlyBodyParameters implements IParameters
 {
 	public readonly acceleration: DOMPoint;
@@ -37,17 +38,63 @@ class ReadonlyBodyParameters implements IParameters
 	}
 }
 
+class ObservableCollection<T>
+{
+	private _collection: T[];
+	private _onChanged?: () => void;
+
+	public get onChanged(): (() => void) | undefined
+	{
+		return this._onChanged;
+	}
+	public get collection(): ReadonlyArray<T>
+	{
+		return this._collection as ReadonlyArray<T>;
+	}
+
+	public set onChanged(value: (() => void) | undefined)
+	{
+		this._onChanged = value;
+	}
+
+	private invokeChangedEvent(): void
+	{
+		if (this._onChanged)
+		{
+			this._onChanged();
+		}
+	}
+
+	public add(value: T)
+	{
+		this._collection.push(value);
+		this.invokeChangedEvent();
+	}
+	public delete(index: number)
+	{
+		this._collection.splice(index, 1);
+		this.invokeChangedEvent();
+	}
+
+	constructor()
+	{
+		this._collection = [];
+	}
+}
+
 class PhysicalBody
 {
 	private _force: DOMPoint;
 	private _position: DOMPoint;
-	private _path: DOMPoint[];
+	private _path: ObservableCollection<DOMPoint>;
 	private _mass: number;
 	private _parameters: BodyParameters;
 
+	private static readonly maxPathLength = 255;
+
 	public get force(): DOMPointReadOnly
 	{
-		return this._force;
+		return this._force as DOMPointReadOnly;
 	}
 	public get position(): DOMPointReadOnly
 	{
@@ -59,16 +106,16 @@ class PhysicalBody
 	}
 	public get parameters(): ReadonlyBodyParameters
 	{
-		return <ReadonlyBodyParameters>this._parameters;
+		return this._parameters as ReadonlyBodyParameters;
 	}
 	public get path(): ReadonlyArray<DOMPoint>
 	{
-		return this._path;
+		return this._path.collection;
 	}
 
 	public set position(position: DOMPointReadOnly)
 	{
-		this._path.push(this._position);
+		this._path.add(this._position);
 		this._position = position;
 	}
 	public set mass(mass: number)
@@ -78,6 +125,14 @@ class PhysicalBody
 	public set parameters(parameters: ReadonlyBodyParameters)
 	{
 		this._parameters = parameters;
+	}
+
+	private reducePath(): void
+	{
+		if (this._path.collection.length > PhysicalBody.maxPathLength)
+		{
+			this._path.delete(0);
+		}
 	}
 
 	public addForce(force: DOMPointReadOnly): void
@@ -98,9 +153,11 @@ class PhysicalBody
 	{
 		this._force = new DOMPoint();
 		this._parameters = parameters;
-		this._path = [];
+		this._path = new ObservableCollection();
 		this._position = position;
 		this._mass = mass;
+
+		this._path.onChanged = this.reducePath.bind(this);
 	}
 }
 
@@ -122,10 +179,20 @@ class PhysicalEngine
 	private readonly maxTimeDelta: number = 10;
 	private _bodyes: PhysicalBody[];
 	private _timeOffset: number;
+	private _speed: number;
 
+	public get speed(): number
+	{
+		return this._speed;
+	}
 	public get bodyes(): PhysicalBody[]
 	{
 		return this._bodyes;
+	}
+
+	public set speed(value: number)
+	{
+		this._speed = value;
 	}
 
 	private exists(body: PhysicalBody): boolean
@@ -140,7 +207,7 @@ class PhysicalEngine
 
 		if (index != -1)
 		{
-			return index
+			return index;
 		}
 		else
 		{
@@ -198,17 +265,10 @@ class PhysicalEngine
 			throw new Error("Can't find body");
 		}
 	}
-	private computeFullVelocity(body: PhysicalBody, velocity: DOMPoint): DOMPoint
+	private computeFullVelocity(baseVelocity: DOMPoint, velocity: DOMPoint): DOMPoint
 	{
-		if (this.exists(body))
-		{
-			// adds base velocity to accelerated velocity
-			return new DOMPoint(velocity.x + body.parameters.baseVelocity.x, velocity.y + body.parameters.baseVelocity.y);
-		}
-		else
-		{
-			throw new Error("Can't find body");
-		}
+		// adds base velocity to accelerated velocity
+		return new DOMPoint(velocity.x + baseVelocity.x, velocity.y + baseVelocity.y);
 	}
 	private computeMovement(body: PhysicalBody, timeDelta: number, acceleration: DOMPoint | undefined = undefined, velocity: DOMPoint | undefined = undefined): DOMPoint
 	{
@@ -227,18 +287,18 @@ class PhysicalEngine
 
 	public update()
 	{
-		const timeDelta = Date.now() - this._timeOffset;
+		const timeDelta = (Date.now() - this._timeOffset) * this._speed;
 
 		this._bodyes.forEach((body) =>
 		{
-			for (let chunk = 0; chunk < Math.floor(timeDelta / this.maxTimeDelta) + 1; chunk++)
+			for (let chunk = 0; chunk < Math.ceil(timeDelta / this.maxTimeDelta); chunk++)
 			{
 				const computedTimeDelta = Math.min(this.maxTimeDelta, timeDelta - chunk * this.maxTimeDelta);
 
 				this.computeForce(body);
 				const acceleration = this.computeAcceleration(body);
 				const velocity = this.computeVelocity(body, computedTimeDelta / 1000, acceleration);
-				const movement = this.computeMovement(body, computedTimeDelta / 1000, acceleration, this.computeFullVelocity(body, velocity));
+				const movement = this.computeMovement(body, computedTimeDelta / 1000, acceleration, this.computeFullVelocity(body.parameters.baseVelocity, velocity));
 
 				body.position = new DOMPoint(movement.x + body.position.x, movement.y + body.position.y);
 				// area addition rule (S = S1 + S2);
@@ -253,7 +313,7 @@ class PhysicalEngine
 
 		this._timeOffset = Date.now();
 	}
-	public start()
+	public resetTimeOffset()
 	{
 		this._timeOffset = Date.now();
 	}
@@ -262,6 +322,7 @@ class PhysicalEngine
 	{
 		this._bodyes = bodyes;
 		this._timeOffset = Date.now();
+		this._speed = 1;
 	}
 }
 
@@ -303,15 +364,15 @@ class VisualEngine
 		if (body.path.length > 0)
 		{
 			this._context.strokeStyle = "gray";
-			this._context.beginPath();
-			this._context.moveTo(body.path[0].x + this._offset.x, body.path[0].y + this._offset.y);
 
-			for (let index = 0; index < body.path.length; index++)
+			for (let index = 1; index < body.path.length; index++)
 			{
+				this._context.beginPath();
+				this._context.moveTo(body.path[index - 1].x + this._offset.x, body.path[index - 1].y + this._offset.y);
+				this._context.globalAlpha = index / body.path.length;
 				this._context.lineTo(body.path[index].x + this._offset.x, body.path[index].y + this._offset.y);
+				this._context.stroke();
 			}
-
-			this._context.stroke();
 		}
 	}
 
@@ -322,134 +383,13 @@ class VisualEngine
 	}
 }
 
-class Playground
-{
-	private _massUnit: number;
-	private _visualEngine: VisualEngine;
-	private _physicalEngine: PhysicalEngine;
-	private _newBody?: PhysicalBody;
-	private _interval: number;
-
-	public initNewBody(): void
-	{
-		this._newBody = new PhysicalBody(new DOMPoint(), 0, new BodyParameters());
-	}
-	public addNewBody(): void
-	{
-		if (this._newBody)
-		{
-			this._physicalEngine.bodyes.push(this._newBody);
-			this._newBody = undefined;
-		}
-		else
-		{
-			throw new Error("New body is not initilized");
-		}
-	}
-
-	public start()
-	{
-		this._interval = setInterval(() =>
-		{
-			this._physicalEngine.update();
-
-			this._visualEngine.context.clearRect(0, 0, 2560, 1440);
-
-			this._physicalEngine.bodyes.forEach((body) => { this._visualEngine.drawBody(body); });
-		})
-	}
-	public stop()
-	{
-		clearInterval(this._interval);
-	}
-
-	public set bodyMass(massUnits: number | undefined)
-	{
-		if (this._newBody && massUnits)
-		{
-			this._newBody.mass = massUnits * this._massUnit;
-		}
-		else
-		{
-			throw new Error("Body or massUnits are not initialized");
-		}
-	}
-	public set bodyPosition(position: DOMPointReadOnly | undefined)
-	{
-		if (this._newBody && position)
-		{
-			this._newBody.position = position;
-		}
-		else
-		{
-			throw new Error("Body or position are not initialized");
-		}
-	}
-	public set bodyBaseVelocity(velocity: DOMPointReadOnly | undefined)
-	{
-		if (this._newBody && velocity)
-		{
-			this._newBody.parameters = new BodyParameters(new DOMPoint(), new DOMPoint(), velocity, new DOMPoint());
-		}
-		else
-		{
-			throw new Error("Body or velocity are not initialized");
-		}
-	}
-
-	public get bodyMass(): number | undefined
-	{
-		if (this._newBody)
-		{
-			return this._newBody.mass / this._massUnit;
-		}
-		else
-		{
-			return undefined;
-		}
-	}
-	public get bodyPosition(): DOMPointReadOnly | undefined
-	{
-		if (this._newBody)
-		{
-			return this._newBody.position;
-		}
-		else
-		{
-			return undefined;
-		}
-	}
-	public get bodyBaseVelocity(): DOMPointReadOnly | undefined
-	{
-		if (this._newBody)
-		{
-			return this._newBody.parameters.baseVelocity;
-		}
-		else
-		{
-			return undefined;
-		}
-	}
-	public get massUnit(): number
-	{
-		return this._massUnit;
-	}
-
-	public constructor(massUnit: number, context: CanvasRenderingContext2D)
-	{
-		this._massUnit = massUnit;
-		this._visualEngine = new VisualEngine(context);
-		this._physicalEngine = new PhysicalEngine([]);
-		this._newBody = undefined;
-		this._interval = -1;
-	}
-}
-
 window.onload = () =>
 {
 	const engine = new PhysicalEngine([new PhysicalBody(new DOMPoint(0, 0), 20e15, new BodyParameters()), new PhysicalBody(new DOMPoint(200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, 100), new DOMPoint())), new PhysicalBody(new DOMPoint(-200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, -100), new DOMPoint()))]);
 	const canvas = <HTMLCanvasElement>document.getElementById("cnvs");
 	const ctx = canvas?.getContext("2d");
+
+	engine.speed = 5;
 
 	if (ctx)
 	{

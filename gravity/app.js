@@ -15,13 +15,41 @@ class ReadonlyBodyParameters {
         this.movement = movement;
     }
 }
+class ObservableCollection {
+    constructor() {
+        this._collection = [];
+    }
+    get onChanged() {
+        return this._onChanged;
+    }
+    get collection() {
+        return this._collection;
+    }
+    set onChanged(value) {
+        this._onChanged = value;
+    }
+    invokeChangedEvent() {
+        if (this._onChanged) {
+            this._onChanged();
+        }
+    }
+    add(value) {
+        this._collection.push(value);
+        this.invokeChangedEvent();
+    }
+    delete(index) {
+        this._collection.splice(index, 1);
+        this.invokeChangedEvent();
+    }
+}
 class PhysicalBody {
     constructor(position, mass, parameters) {
         this._force = new DOMPoint();
         this._parameters = parameters;
-        this._path = [];
+        this._path = new ObservableCollection();
         this._position = position;
         this._mass = mass;
+        this._path.onChanged = this.reducePath.bind(this);
     }
     get force() {
         return this._force;
@@ -36,10 +64,10 @@ class PhysicalBody {
         return this._parameters;
     }
     get path() {
-        return this._path;
+        return this._path.collection;
     }
     set position(position) {
-        this._path.push(this._position);
+        this._path.add(this._position);
         this._position = position;
     }
     set mass(mass) {
@@ -47,6 +75,11 @@ class PhysicalBody {
     }
     set parameters(parameters) {
         this._parameters = parameters;
+    }
+    reducePath() {
+        if (this._path.collection.length > PhysicalBody.maxPathLength) {
+            this._path.delete(0);
+        }
     }
     addForce(force) {
         this._force.x += force.x;
@@ -59,6 +92,7 @@ class PhysicalBody {
         this._force = new DOMPoint();
     }
 }
+PhysicalBody.maxPathLength = 255;
 class Utils {
     static distance(point1, point2) {
         return Math.sqrt((point1.x - point2.x) * (point1.x - point2.x) + (point1.y - point2.y) * (point1.y - point2.y));
@@ -67,15 +101,22 @@ class Utils {
         return (base1 + base2) * height / 2;
     }
 }
-class Engine {
+class PhysicalEngine {
     constructor(bodyes) {
         this.G = 6.68e-11;
         this.maxTimeDelta = 10;
         this._bodyes = bodyes;
         this._timeOffset = Date.now();
+        this._speed = 1;
+    }
+    get speed() {
+        return this._speed;
     }
     get bodyes() {
         return this._bodyes;
+    }
+    set speed(value) {
+        this._speed = value;
     }
     exists(body) {
         const index = this._bodyes.indexOf(body);
@@ -125,14 +166,9 @@ class Engine {
             throw new Error("Can't find body");
         }
     }
-    computeFullVelocity(body, velocity) {
-        if (this.exists(body)) {
-            // adds base velocity to accelerated velocity
-            return new DOMPoint(velocity.x + body.parameters.baseVelocity.x, velocity.y + body.parameters.baseVelocity.y);
-        }
-        else {
-            throw new Error("Can't find body");
-        }
+    computeFullVelocity(baseVelocity, velocity) {
+        // adds base velocity to accelerated velocity
+        return new DOMPoint(velocity.x + baseVelocity.x, velocity.y + baseVelocity.y);
     }
     computeMovement(body, timeDelta, acceleration = undefined, velocity = undefined) {
         if (this.exists(body)) {
@@ -145,14 +181,14 @@ class Engine {
         }
     }
     update() {
-        const timeDelta = Date.now() - this._timeOffset;
+        const timeDelta = (Date.now() - this._timeOffset) * this._speed;
         this._bodyes.forEach((body) => {
-            for (let chunk = 0; chunk < Math.floor(timeDelta / this.maxTimeDelta) + 1; chunk++) {
+            for (let chunk = 0; chunk < Math.ceil(timeDelta / this.maxTimeDelta); chunk++) {
                 const computedTimeDelta = Math.min(this.maxTimeDelta, timeDelta - chunk * this.maxTimeDelta);
                 this.computeForce(body);
                 const acceleration = this.computeAcceleration(body);
                 const velocity = this.computeVelocity(body, computedTimeDelta / 1000, acceleration);
-                const movement = this.computeMovement(body, computedTimeDelta / 1000, acceleration, this.computeFullVelocity(body, velocity));
+                const movement = this.computeMovement(body, computedTimeDelta / 1000, acceleration, this.computeFullVelocity(body.parameters.baseVelocity, velocity));
                 body.position = new DOMPoint(movement.x + body.position.x, movement.y + body.position.y);
                 // area addition rule (S = S1 + S2);
                 body.parameters = new BodyParameters(acceleration, new DOMPoint(body.parameters.velocity.x + velocity.x, body.parameters.velocity.y + velocity.y), body.parameters.baseVelocity, new DOMPoint(body.parameters.movement.x + movement.x, body.parameters.movement.y + movement.y));
@@ -160,7 +196,7 @@ class Engine {
         });
         this._timeOffset = Date.now();
     }
-    start() {
+    resetTimeOffset() {
         this._timeOffset = Date.now();
     }
 }
@@ -195,101 +231,21 @@ class VisualEngine {
     drawPath(body) {
         if (body.path.length > 0) {
             this._context.strokeStyle = "gray";
-            this._context.beginPath();
-            this._context.moveTo(body.path[0].x + this._offset.x, body.path[0].y + this._offset.y);
-            for (let index = 0; index < body.path.length; index++) {
+            for (let index = 1; index < body.path.length; index++) {
+                this._context.beginPath();
+                this._context.moveTo(body.path[index - 1].x + this._offset.x, body.path[index - 1].y + this._offset.y);
+                this._context.globalAlpha = index / body.path.length;
                 this._context.lineTo(body.path[index].x + this._offset.x, body.path[index].y + this._offset.y);
+                this._context.stroke();
             }
-            this._context.stroke();
         }
-    }
-}
-class Playground {
-    constructor(massUnit, context) {
-        this._massUnit = massUnit;
-        this._visualEngine = new VisualEngine(context);
-        this._physicalEngine = new Engine([]);
-        this._newBody = undefined;
-        this._interval = -1;
-    }
-    initNewBody() {
-        this._newBody = new PhysicalBody(new DOMPoint(), 0, new BodyParameters());
-    }
-    addNewBody() {
-        if (this._newBody) {
-            this._physicalEngine.bodyes.push(this._newBody);
-            this._newBody = undefined;
-        }
-        else {
-            throw new Error("New body is not initilized");
-        }
-    }
-    start() {
-        this._interval = setInterval(() => {
-            this._physicalEngine.update();
-            this._visualEngine.context.clearRect(0, 0, 2560, 1440);
-            this._physicalEngine.bodyes.forEach((body) => { this._visualEngine.drawBody(body); });
-        });
-    }
-    stop() {
-        clearInterval(this._interval);
-    }
-    set bodyMass(massUnits) {
-        if (this._newBody && massUnits) {
-            this._newBody.mass = massUnits * this._massUnit;
-        }
-        else {
-            throw new Error("Body or massUnits are not initialized");
-        }
-    }
-    set bodyPosition(position) {
-        if (this._newBody && position) {
-            this._newBody.position = position;
-        }
-        else {
-            throw new Error("Body or position are not initialized");
-        }
-    }
-    set bodyBaseVelocity(velocity) {
-        if (this._newBody && velocity) {
-            this._newBody.parameters = new BodyParameters(new DOMPoint(), new DOMPoint(), velocity, new DOMPoint());
-        }
-        else {
-            throw new Error("Body or velocity are not initialized");
-        }
-    }
-    get bodyMass() {
-        if (this._newBody) {
-            return this._newBody.mass / this._massUnit;
-        }
-        else {
-            return undefined;
-        }
-    }
-    get bodyPosition() {
-        if (this._newBody) {
-            return this._newBody.position;
-        }
-        else {
-            return undefined;
-        }
-    }
-    get bodyBaseVelocity() {
-        if (this._newBody) {
-            return this._newBody.parameters.baseVelocity;
-        }
-        else {
-            return undefined;
-        }
-    }
-    get massUnit() {
-        return this._massUnit;
     }
 }
 window.onload = () => {
-    const engine = new Engine([new PhysicalBody(new DOMPoint(0, 0), 20e15, new BodyParameters()), new PhysicalBody(new DOMPoint(200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, 100), new DOMPoint())), new PhysicalBody(new DOMPoint(-200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, -100), new DOMPoint()))]);
+    const engine = new PhysicalEngine([new PhysicalBody(new DOMPoint(0, 0), 20e15, new BodyParameters()), new PhysicalBody(new DOMPoint(200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, 100), new DOMPoint())), new PhysicalBody(new DOMPoint(-200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, -100), new DOMPoint()))]);
     const canvas = document.getElementById("cnvs");
     const ctx = canvas?.getContext("2d");
+    engine.speed = 5;
     if (ctx) {
         const vis = new VisualEngine(ctx);
         setInterval(() => {
