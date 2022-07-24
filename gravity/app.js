@@ -203,29 +203,32 @@ class PhysicalEngine {
 class VisualEngine {
     constructor(context) {
         this._context = context;
-        this._offset = new DOMPoint(screen.width / 2, screen.height / 2);
+        this._offset = new DOMPoint(window.screen.availWidth / 2, window.screen.availHeight / 2);
     }
     get context() {
         return this._context;
     }
     drawBody(body) {
-        this._context.fillStyle = "black";
+        this._context.fillStyle = "white";
         this._context.beginPath();
         this._context.arc(body.position.x + this._offset.x, body.position.y + this._offset.y, 25, 0, Math.PI * 2);
         this._context.fill();
     }
     drawVelocity(body) {
+        const vectorStart = new DOMPoint(body.position.x + this._offset.x, body.position.y + this._offset.y);
+        const vectorEnd = new DOMPoint(body.position.x + body.parameters.velocity.x + body.parameters.baseVelocity.x + this._offset.x, body.position.y + body.parameters.velocity.y + body.parameters.baseVelocity.y + this._offset.y);
+        const arrowSize = 10;
+        const arrowAngle = Math.PI / 4;
+        const vectorAngle = Math.atan2(vectorEnd.y - vectorStart.y, vectorEnd.x - vectorStart.x);
+        const arrowEnd_1 = new DOMPoint(vectorEnd.x + -Math.cos(vectorAngle - arrowAngle) * arrowSize, vectorEnd.y + -Math.sin(vectorAngle - arrowAngle) * arrowSize);
+        const arrowEnd_2 = new DOMPoint(vectorEnd.x + -Math.cos(vectorAngle + arrowAngle) * arrowSize, vectorEnd.y + -Math.sin(vectorAngle + arrowAngle) * arrowSize);
         this._context.strokeStyle = "red";
         this._context.beginPath();
-        this._context.moveTo(body.position.x + this._offset.x, body.position.y + this._offset.y);
-        this._context.lineTo(body.position.x + body.parameters.velocity.x + body.parameters.baseVelocity.x + this._offset.x, body.position.y + body.parameters.velocity.y + body.parameters.baseVelocity.y + this._offset.y);
-        this._context.stroke();
-    }
-    drawMovement(body) {
-        this._context.strokeStyle = "green";
-        this._context.beginPath();
-        this._context.moveTo(body.position.x + this._offset.x, body.position.y + this._offset.y);
-        this._context.lineTo(body.position.x + body.parameters.movement.x + this._offset.x, body.position.y + body.parameters.movement.y + this._offset.y);
+        this._context.moveTo(vectorStart.x, vectorStart.y);
+        this._context.lineTo(vectorEnd.x, vectorEnd.y);
+        this._context.lineTo(arrowEnd_1.x, arrowEnd_1.y);
+        this._context.moveTo(vectorEnd.x, vectorEnd.y);
+        this._context.lineTo(arrowEnd_2.x, arrowEnd_2.y);
         this._context.stroke();
     }
     drawPath(body) {
@@ -233,8 +236,8 @@ class VisualEngine {
             this._context.strokeStyle = "gray";
             for (let index = 1; index < body.path.length; index++) {
                 this._context.beginPath();
-                this._context.moveTo(body.path[index - 1].x + this._offset.x, body.path[index - 1].y + this._offset.y);
                 this._context.globalAlpha = index / body.path.length;
+                this._context.moveTo(body.path[index - 1].x + this._offset.x, body.path[index - 1].y + this._offset.y);
                 this._context.lineTo(body.path[index].x + this._offset.x, body.path[index].y + this._offset.y);
                 this._context.stroke();
             }
@@ -245,12 +248,15 @@ window.onload = () => {
     const engine = new PhysicalEngine([new PhysicalBody(new DOMPoint(0, 0), 20e15, new BodyParameters()), new PhysicalBody(new DOMPoint(200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, 100), new DOMPoint())), new PhysicalBody(new DOMPoint(-200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, -100), new DOMPoint()))]);
     const canvas = document.getElementById("cnvs");
     const ctx = canvas?.getContext("2d");
+    canvas.width = window.screen.availWidth;
+    canvas.height = window.screen.availHeight;
     engine.speed = 5;
     if (ctx) {
         const vis = new VisualEngine(ctx);
         setInterval(() => {
             engine.update();
-            ctx.clearRect(0, 0, 2560, 1440);
+            ctx.fillStyle = "black";
+            ctx.fillRect(0, 0, 2560, 1440);
             engine.bodyes.forEach((body) => { vis.drawBody(body); vis.drawVelocity(body); vis.drawPath(body); });
         }, 10);
     }
