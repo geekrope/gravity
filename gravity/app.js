@@ -1,4 +1,29 @@
 "use strict";
+class Utils {
+    static distance(point1, point2) {
+        return Math.sqrt((point1.x - point2.x) * (point1.x - point2.x) + (point1.y - point2.y) * (point1.y - point2.y));
+    }
+    static trapezeArea(base1, base2, height) {
+        return (base1 + base2) * height / 2;
+    }
+    static addVectors(...vectors) {
+        let result = new DOMPoint();
+        vectors.forEach((vector) => {
+            result.x += vector.x;
+            result.y += vector.y;
+        });
+        return result;
+    }
+    static substractVectors(vector1, vector2) {
+        return new DOMPoint(vector1.x - vector2.x, vector1.y - vector2.y);
+    }
+    static multiplyVectors(vector1, vector2) {
+        return vector1.x * vector2.x + vector1.y * vector2.y;
+    }
+    static multiplyVectorByScalar(vector, scalar) {
+        return new DOMPoint(vector.x * scalar, vector.y * scalar);
+    }
+}
 class BodyParameters {
     constructor(acceleration = new DOMPoint(), velocity = new DOMPoint(), baseVelocity = new DOMPoint(), movement = new DOMPoint()) {
         this.acceleration = acceleration;
@@ -7,7 +32,7 @@ class BodyParameters {
         this.movement = movement;
     }
     get fullVelocity() {
-        return new DOMPoint(this.baseVelocity.x + this.velocity.x, this.baseVelocity.y + this.velocity.y);
+        return Utils.addVectors(this.baseVelocity, this.velocity);
     }
 }
 class ReadonlyBodyParameters {
@@ -18,7 +43,7 @@ class ReadonlyBodyParameters {
         this.movement = movement;
     }
     get fullVelocity() {
-        return new DOMPoint(this.baseVelocity.x + this.velocity.x, this.baseVelocity.y + this.velocity.y);
+        return Utils.addVectors(this.baseVelocity, this.velocity);
     }
 }
 class ObservableCollection {
@@ -88,8 +113,7 @@ class PhysicalBody {
         }
     }
     addForce(force) {
-        this._force.x += force.x;
-        this._force.y += force.y;
+        this._force = Utils.addVectors(this._force, force);
     }
     setForce(force) {
         this._force = force;
@@ -99,14 +123,6 @@ class PhysicalBody {
     }
 }
 PhysicalBody.maxPathLength = 255;
-class Utils {
-    static distance(point1, point2) {
-        return Math.sqrt((point1.x - point2.x) * (point1.x - point2.x) + (point1.y - point2.y) * (point1.y - point2.y));
-    }
-    static trapezeArea(base1, base2, height) {
-        return (base1 + base2) * height / 2;
-    }
-}
 class PhysicalEngine {
     constructor(bodyes) {
         this.G = 6.68e-11;
@@ -125,38 +141,36 @@ class PhysicalEngine {
         this._speed = value;
     }
     exists(body) {
-        const index = this._bodyes.indexOf(body);
-        return index != -1;
+        return this._bodyes.indexOf(body) != -1;
     }
     getBodyIndex(body) {
-        const index = this._bodyes.indexOf(body);
-        if (index != -1) {
-            return index;
-        }
-        else {
-            throw new Error("Can't find body");
-        }
+        return this._bodyes.indexOf(body);
     }
     computeForce(influencedBody) {
         const formula = (mass1, mass2, distance) => {
             return this.G * mass1 * mass2 / (distance * distance);
         };
         const influencedBodyIndex = this.getBodyIndex(influencedBody);
-        influencedBody.clearForces();
-        for (let influencingBodyIndex = 0; influencingBodyIndex < this._bodyes.length; influencingBodyIndex++) {
-            const influencingBody = this._bodyes[influencingBodyIndex];
-            if (influencingBodyIndex != influencedBodyIndex) {
-                const forceValue = formula(influencedBody.mass, influencingBody.mass, Utils.distance(influencedBody.position, influencingBody.position));
-                const angle = Math.atan2(influencingBody.position.y - influencedBody.position.y, influencingBody.position.x - influencedBody.position.x);
-                const forceVector = new DOMPoint(forceValue * Math.cos(angle), forceValue * Math.sin(angle));
-                influencedBody.addForce(forceVector);
+        if (influencedBodyIndex != -1) {
+            influencedBody.clearForces();
+            for (let influencingBodyIndex = 0; influencingBodyIndex < this._bodyes.length; influencingBodyIndex++) {
+                if (influencingBodyIndex != influencedBodyIndex) {
+                    const influencingBody = this._bodyes[influencingBodyIndex];
+                    const forceValue = formula(influencedBody.mass, influencingBody.mass, Utils.distance(influencedBody.position, influencingBody.position));
+                    const angle = Math.atan2(influencingBody.position.y - influencedBody.position.y, influencingBody.position.x - influencedBody.position.x);
+                    const forceVector = new DOMPoint(forceValue * Math.cos(angle), forceValue * Math.sin(angle));
+                    influencedBody.addForce(forceVector);
+                }
             }
+        }
+        else {
+            throw new Error("Can't find body");
         }
     }
     computeAcceleration(body) {
         if (this.exists(body)) {
             // F = ma
-            return new DOMPoint(body.force.x / body.mass, body.force.y / body.mass);
+            return Utils.multiplyVectorByScalar(body.force, 1 / body.mass);
         }
         else {
             throw new Error("Can't find body");
@@ -187,11 +201,11 @@ class PhysicalEngine {
                 const computedTimeDelta = Math.min(this.maxTimeDelta, timeDelta - chunk * this.maxTimeDelta);
                 this.computeForce(body);
                 const acceleration = this.computeAcceleration(body);
-                const velocity = this.computeVelocity(body, computedTimeDelta / 1000, acceleration);
-                const movement = this.computeMovement(body, computedTimeDelta / 1000, new DOMPoint(velocity.x + body.parameters.baseVelocity.x, velocity.y + body.parameters.baseVelocity.y));
-                body.position = new DOMPoint(movement.x + body.position.x, movement.y + body.position.y);
+                const velocity = this.computeVelocity(body, computedTimeDelta / PhysicalEngine.timeUnit, acceleration);
+                const movement = this.computeMovement(body, computedTimeDelta / PhysicalEngine.timeUnit, Utils.addVectors(velocity, body.parameters.baseVelocity));
+                body.position = Utils.addVectors(movement, body.position);
                 // area addition rule (S = S1 + S2);
-                body.parameters = new BodyParameters(acceleration, new DOMPoint(body.parameters.velocity.x + velocity.x, body.parameters.velocity.y + velocity.y), body.parameters.baseVelocity, new DOMPoint(body.parameters.movement.x + movement.x, body.parameters.movement.y + movement.y));
+                body.parameters = new BodyParameters(acceleration, Utils.addVectors(velocity, body.parameters.velocity), body.parameters.baseVelocity, Utils.addVectors(movement, body.parameters.movement));
             }
         });
         this._timeOffset = Date.now();
@@ -200,10 +214,13 @@ class PhysicalEngine {
         this._timeOffset = Date.now();
     }
 }
+PhysicalEngine.timeUnit = 1000;
+PhysicalEngine.weightUnit = 1e15;
 class VisualEngine {
     constructor(context, offset) {
         this._context = context;
         this._offset = offset;
+        this._transform = new DOMMatrix([1, 0, 0, 1, offset.x, offset.y]);
     }
     get context() {
         return this._context;
@@ -211,23 +228,36 @@ class VisualEngine {
     get offset() {
         return this._offset;
     }
+    get transform() {
+        return this._transform;
+    }
+    set transform(value) {
+        this._transform = value;
+    }
+    applyTransform() {
+        this._context.setTransform(this._transform);
+    }
     drawBody(body) {
         this._context.save();
+        this.applyTransform();
         this._context.fillStyle = "white";
+        this._context.strokeStyle = "black";
         this._context.beginPath();
-        this._context.arc(body.position.x + this._offset.x, body.position.y + this._offset.y, 25, 0, Math.PI * 2);
+        this._context.arc(body.position.x, body.position.y, Math.log(body.mass / PhysicalEngine.weightUnit + Math.E) / Math.LOG2E * 25, 0, Math.PI * 2);
         this._context.fill();
+        this._context.stroke();
         this._context.restore();
     }
     drawVelocity(body) {
         this._context.save();
-        const vectorStart = new DOMPoint(body.position.x + this._offset.x, body.position.y + this._offset.y);
-        const vectorEnd = new DOMPoint(body.position.x + body.parameters.fullVelocity.x + this._offset.x, body.position.y + body.parameters.fullVelocity.y + this._offset.y);
+        this.applyTransform();
+        const vectorStart = body.position;
+        const vectorEnd = Utils.addVectors(body.position, body.parameters.fullVelocity);
         const arrowSize = 10;
         const arrowAngle = Math.PI / 4;
         const vectorAngle = Math.atan2(vectorEnd.y - vectorStart.y, vectorEnd.x - vectorStart.x);
-        const arrowEnd_1 = new DOMPoint(vectorEnd.x + -Math.cos(vectorAngle - arrowAngle) * arrowSize, vectorEnd.y + -Math.sin(vectorAngle - arrowAngle) * arrowSize);
-        const arrowEnd_2 = new DOMPoint(vectorEnd.x + -Math.cos(vectorAngle + arrowAngle) * arrowSize, vectorEnd.y + -Math.sin(vectorAngle + arrowAngle) * arrowSize);
+        const arrowEnd_1 = new DOMPoint(vectorEnd.x - Math.cos(vectorAngle - arrowAngle) * arrowSize, vectorEnd.y - Math.sin(vectorAngle - arrowAngle) * arrowSize);
+        const arrowEnd_2 = new DOMPoint(vectorEnd.x - Math.cos(vectorAngle + arrowAngle) * arrowSize, vectorEnd.y - Math.sin(vectorAngle + arrowAngle) * arrowSize);
         this._context.strokeStyle = "red";
         this._context.beginPath();
         this._context.moveTo(vectorStart.x, vectorStart.y);
@@ -241,12 +271,13 @@ class VisualEngine {
     drawPath(body) {
         this._context.save();
         if (body.path.length > 0) {
+            this.applyTransform();
             this._context.strokeStyle = "gray";
             for (let index = 1; index < body.path.length; index++) {
                 this._context.beginPath();
                 this._context.globalAlpha = index / body.path.length;
-                this._context.moveTo(body.path[index - 1].x + this._offset.x, body.path[index - 1].y + this._offset.y);
-                this._context.lineTo(body.path[index].x + this._offset.x, body.path[index].y + this._offset.y);
+                this._context.moveTo(body.path[index - 1].x, body.path[index - 1].y);
+                this._context.lineTo(body.path[index].x, body.path[index].y);
                 this._context.stroke();
             }
         }
@@ -293,7 +324,7 @@ class Playground {
     removeEventListener(type, handler) {
         switch (type) {
             case "update":
-                this._onUpdate.push(handler);
+                this._onUpdate.splice(this._onUpdate.indexOf(handler));
         }
     }
 }
@@ -308,11 +339,12 @@ function draw(playground) {
     });
     if (playground.editedBody) {
         playground.visualEngine.drawBody(playground.editedBody);
+        playground.visualEngine.drawPath(playground.editedBody);
     }
 }
 function addBodyMass(playground) {
     if (playground.editedBody) {
-        playground.editedBody.mass += 0.01e15;
+        playground.editedBody.mass += PhysicalEngine.weightUnit / 50;
     }
 }
 function mouseDownHandler(playground) {
