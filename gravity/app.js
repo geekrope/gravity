@@ -6,6 +6,9 @@ class BodyParameters {
         this.baseVelocity = baseVelocity;
         this.movement = movement;
     }
+    get fullVelocity() {
+        return new DOMPoint(this.baseVelocity.x + this.velocity.x, this.baseVelocity.y + this.velocity.y);
+    }
 }
 class ReadonlyBodyParameters {
     constructor(acceleration = new DOMPoint(), velocity = new DOMPoint(), baseVelocity = new DOMPoint(), movement = new DOMPoint()) {
@@ -13,6 +16,9 @@ class ReadonlyBodyParameters {
         this.velocity = velocity;
         this.baseVelocity = baseVelocity;
         this.movement = movement;
+    }
+    get fullVelocity() {
+        return new DOMPoint(this.baseVelocity.x + this.velocity.x, this.baseVelocity.y + this.velocity.y);
     }
 }
 class ObservableCollection {
@@ -112,7 +118,7 @@ class PhysicalEngine {
     get speed() {
         return this._speed;
     }
-    get bodyes() {
+    get bodyies() {
         return this._bodyes;
     }
     set speed(value) {
@@ -156,25 +162,19 @@ class PhysicalEngine {
             throw new Error("Can't find body");
         }
     }
-    computeVelocity(body, timeDelta, acceleration = undefined) {
+    computeVelocity(body, timeDelta, acceleration) {
         if (this.exists(body)) {
-            const newAcceleration = acceleration || this.computeAcceleration(body);
             // finds area (difference between antiderivatives) between current acceleration and last captured acceleration
-            return new DOMPoint(Utils.trapezeArea(body.parameters.acceleration.x, newAcceleration.x, timeDelta), Utils.trapezeArea(body.parameters.acceleration.y, newAcceleration.y, timeDelta)); // first integral of acceleration
+            return new DOMPoint(Utils.trapezeArea(body.parameters.acceleration.x, acceleration.x, timeDelta), Utils.trapezeArea(body.parameters.acceleration.y, acceleration.y, timeDelta)); // first integral of acceleration
         }
         else {
             throw new Error("Can't find body");
         }
     }
-    computeFullVelocity(baseVelocity, velocity) {
-        // adds base velocity to accelerated velocity
-        return new DOMPoint(velocity.x + baseVelocity.x, velocity.y + baseVelocity.y);
-    }
-    computeMovement(body, timeDelta, acceleration = undefined, velocity = undefined) {
+    computeMovement(body, timeDelta, velocity) {
         if (this.exists(body)) {
-            const newVelocity = velocity || this.computeVelocity(body, timeDelta, acceleration);
             // finds area (difference between antiderivatives) between current velocity and last captured velocity
-            return new DOMPoint(Utils.trapezeArea(body.parameters.velocity.x, newVelocity.x, timeDelta), Utils.trapezeArea(body.parameters.velocity.y, newVelocity.y, timeDelta));
+            return new DOMPoint(Utils.trapezeArea(body.parameters.velocity.x, velocity.x, timeDelta), Utils.trapezeArea(body.parameters.velocity.y, velocity.y, timeDelta));
         }
         else {
             throw new Error("Can't find body");
@@ -188,7 +188,7 @@ class PhysicalEngine {
                 this.computeForce(body);
                 const acceleration = this.computeAcceleration(body);
                 const velocity = this.computeVelocity(body, computedTimeDelta / 1000, acceleration);
-                const movement = this.computeMovement(body, computedTimeDelta / 1000, acceleration, this.computeFullVelocity(body.parameters.baseVelocity, velocity));
+                const movement = this.computeMovement(body, computedTimeDelta / 1000, new DOMPoint(velocity.x + body.parameters.baseVelocity.x, velocity.y + body.parameters.baseVelocity.y));
                 body.position = new DOMPoint(movement.x + body.position.x, movement.y + body.position.y);
                 // area addition rule (S = S1 + S2);
                 body.parameters = new BodyParameters(acceleration, new DOMPoint(body.parameters.velocity.x + velocity.x, body.parameters.velocity.y + velocity.y), body.parameters.baseVelocity, new DOMPoint(body.parameters.movement.x + movement.x, body.parameters.movement.y + movement.y));
@@ -201,22 +201,28 @@ class PhysicalEngine {
     }
 }
 class VisualEngine {
-    constructor(context) {
+    constructor(context, offset) {
         this._context = context;
-        this._offset = new DOMPoint(window.screen.availWidth / 2, window.screen.availHeight / 2);
+        this._offset = offset;
     }
     get context() {
         return this._context;
     }
+    get offset() {
+        return this._offset;
+    }
     drawBody(body) {
+        this._context.save();
         this._context.fillStyle = "white";
         this._context.beginPath();
         this._context.arc(body.position.x + this._offset.x, body.position.y + this._offset.y, 25, 0, Math.PI * 2);
         this._context.fill();
+        this._context.restore();
     }
     drawVelocity(body) {
+        this._context.save();
         const vectorStart = new DOMPoint(body.position.x + this._offset.x, body.position.y + this._offset.y);
-        const vectorEnd = new DOMPoint(body.position.x + body.parameters.velocity.x + body.parameters.baseVelocity.x + this._offset.x, body.position.y + body.parameters.velocity.y + body.parameters.baseVelocity.y + this._offset.y);
+        const vectorEnd = new DOMPoint(body.position.x + body.parameters.fullVelocity.x + this._offset.x, body.position.y + body.parameters.fullVelocity.y + this._offset.y);
         const arrowSize = 10;
         const arrowAngle = Math.PI / 4;
         const vectorAngle = Math.atan2(vectorEnd.y - vectorStart.y, vectorEnd.x - vectorStart.x);
@@ -230,8 +236,10 @@ class VisualEngine {
         this._context.moveTo(vectorEnd.x, vectorEnd.y);
         this._context.lineTo(arrowEnd_2.x, arrowEnd_2.y);
         this._context.stroke();
+        this._context.restore();
     }
     drawPath(body) {
+        this._context.save();
         if (body.path.length > 0) {
             this._context.strokeStyle = "gray";
             for (let index = 1; index < body.path.length; index++) {
@@ -242,23 +250,111 @@ class VisualEngine {
                 this._context.stroke();
             }
         }
+        this._context.restore();
     }
 }
+class Playground {
+    constructor(canvas, context, physicalEngine, visualEngine) {
+        this._canvas = canvas;
+        this._context = context;
+        this._physicalEngine = physicalEngine;
+        this._visualEngine = visualEngine;
+        this._onUpdate = [];
+        setInterval(() => {
+            this._onUpdate.forEach((handler) => {
+                handler(this);
+            });
+        }, 10);
+    }
+    get canvas() {
+        return this._canvas;
+    }
+    get context() {
+        return this._context;
+    }
+    get physicalEngine() {
+        return this._physicalEngine;
+    }
+    get visualEngine() {
+        return this._visualEngine;
+    }
+    get editedBody() {
+        return this._editedBody;
+    }
+    set editedBody(value) {
+        this._editedBody = value;
+    }
+    addEventListener(type, handler) {
+        switch (type) {
+            case "update":
+                this._onUpdate.push(handler);
+        }
+    }
+    removeEventListener(type, handler) {
+        switch (type) {
+            case "update":
+                this._onUpdate.push(handler);
+        }
+    }
+}
+function draw(playground) {
+    playground.physicalEngine.update();
+    playground.context.fillStyle = "black";
+    playground.context.fillRect(0, 0, window.screen.width, window.screen.height);
+    playground.physicalEngine.bodyies.forEach((body) => {
+        playground.visualEngine.drawBody(body);
+        playground.visualEngine.drawVelocity(body);
+        playground.visualEngine.drawPath(body);
+    });
+    if (playground.editedBody) {
+        playground.visualEngine.drawBody(playground.editedBody);
+    }
+}
+function addBodyMass(playground) {
+    if (playground.editedBody) {
+        playground.editedBody.mass += 0.01e15;
+    }
+}
+function mouseDownHandler(playground) {
+    return (function (event) {
+        this.editedBody = new PhysicalBody(new DOMPoint(event.offsetX - playground.visualEngine.offset.x, event.offsetY - playground.visualEngine.offset.y), 0, new BodyParameters());
+        this.addEventListener("update", addBodyMass);
+    }).bind(playground);
+}
+function mouseMoveHandler(playground) {
+    let timeOffset = Date.now();
+    return (function (event) {
+        if (this.editedBody) {
+            const timeDelta = (Date.now() - timeOffset) / 100;
+            const newPosition = new DOMPoint(event.offsetX - playground.visualEngine.offset.x, event.offsetY - playground.visualEngine.offset.y);
+            this.editedBody.parameters = new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint((newPosition.x - this.editedBody.position.x) / timeDelta, (newPosition.y - this.editedBody.position.y) / timeDelta), new DOMPoint());
+            this.editedBody.position = newPosition;
+            timeOffset = Date.now();
+        }
+    }).bind(playground);
+}
+function mouseUpHandler(playground) {
+    return (function (_event) {
+        if (this.editedBody) {
+            this.physicalEngine.bodyies.push(this.editedBody);
+            this.removeEventListener("update", addBodyMass);
+            this.editedBody = undefined;
+        }
+    }).bind(playground);
+}
 window.onload = () => {
-    const engine = new PhysicalEngine([new PhysicalBody(new DOMPoint(0, 0), 20e15, new BodyParameters()), new PhysicalBody(new DOMPoint(200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, 100), new DOMPoint())), new PhysicalBody(new DOMPoint(-200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, -100), new DOMPoint()))]);
+    const physicalEngine = new PhysicalEngine([new PhysicalBody(new DOMPoint(0, 0), 20e15, new BodyParameters()), new PhysicalBody(new DOMPoint(200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, 100), new DOMPoint())), new PhysicalBody(new DOMPoint(-200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, -100), new DOMPoint()))]);
     const canvas = document.getElementById("cnvs");
-    const ctx = canvas?.getContext("2d");
+    const context = canvas?.getContext("2d");
     canvas.width = window.screen.availWidth;
     canvas.height = window.screen.availHeight;
-    engine.speed = 5;
-    if (ctx) {
-        const vis = new VisualEngine(ctx);
-        setInterval(() => {
-            engine.update();
-            ctx.fillStyle = "black";
-            ctx.fillRect(0, 0, 2560, 1440);
-            engine.bodyes.forEach((body) => { vis.drawBody(body); vis.drawVelocity(body); vis.drawPath(body); });
-        }, 10);
+    if (context) {
+        const visualEngine = new VisualEngine(context, new DOMPoint(window.screen.availWidth / 2, window.screen.availHeight / 2));
+        const playground = new Playground(canvas, context, physicalEngine, visualEngine);
+        playground.addEventListener("update", draw);
+        canvas.addEventListener("mousedown", mouseDownHandler(playground));
+        canvas.addEventListener("mousemove", mouseMoveHandler(playground));
+        canvas.addEventListener("mouseup", mouseUpHandler(playground));
     }
 };
 //# sourceMappingURL=app.js.map
