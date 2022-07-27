@@ -102,7 +102,9 @@ class PhysicalBody {
         this._position = position;
     }
     set mass(mass) {
-        this._mass = mass;
+        if (mass != 0) {
+            this._mass = mass;
+        }
     }
     set parameters(parameters) {
         this._parameters = parameters;
@@ -218,9 +220,11 @@ PhysicalEngine.timeUnit = 1000;
 PhysicalEngine.weightUnit = 1e15;
 class VisualEngine {
     constructor(context, offset) {
+        this._emptyMatrix = new DOMMatrixReadOnly([1, 0, 0, 1, 0, 0]);
         this._context = context;
         this._offset = offset;
-        this._transform = new DOMMatrix([1, 0, 0, 1, offset.x, offset.y]);
+        this._transform = this._emptyMatrix;
+        this._renderTransform = this.evaluateRenderTransform();
     }
     get context() {
         return this._context;
@@ -228,14 +232,22 @@ class VisualEngine {
     get offset() {
         return this._offset;
     }
-    get transform() {
-        return this._transform;
+    get renderTransform() {
+        return this._renderTransform;
     }
     set transform(value) {
         this._transform = value;
+        this._renderTransform = this.evaluateRenderTransform();
+    }
+    set offset(value) {
+        this._offset = value;
+        this._renderTransform = this.evaluateRenderTransform();
+    }
+    evaluateRenderTransform() {
+        return this._transform.translate(this._offset.x, this._offset.y);
     }
     applyTransform() {
-        this._context.setTransform(this._transform);
+        this._context.setTransform(this._renderTransform);
     }
     drawBody(body) {
         this._context.save();
@@ -283,6 +295,36 @@ class VisualEngine {
         }
         this._context.restore();
     }
+    drawFps(fpsCounter) {
+        this._context.save();
+        const fontSize = 16;
+        const margin = 8;
+        this._context.setTransform(this._emptyMatrix);
+        this._context.fillStyle = "white";
+        this._context.font = `${fontSize}px serif`;
+        this._context.textBaseline = "top";
+        this._context.textAlign = "left";
+        this._context.fillText(fpsCounter.fps.toString(), margin, margin);
+        this._context.restore();
+    }
+}
+class FpsCounter {
+    constructor() {
+        this._timeOffset = Date.now();
+        this._frames = 0;
+        this._fps = 0;
+    }
+    get fps() {
+        return this._fps;
+    }
+    tick() {
+        if (Date.now() - this._timeOffset > 1000) {
+            this._fps = this._frames;
+            this._frames = 0;
+            this._timeOffset = Date.now();
+        }
+        this._frames++;
+    }
 }
 class Playground {
     constructor(canvas, context, physicalEngine, visualEngine) {
@@ -290,6 +332,7 @@ class Playground {
         this._context = context;
         this._physicalEngine = physicalEngine;
         this._visualEngine = visualEngine;
+        this._fpsCounter = new FpsCounter();
         this._onUpdate = [];
         setInterval(() => {
             this._onUpdate.forEach((handler) => {
@@ -308,6 +351,9 @@ class Playground {
     }
     get visualEngine() {
         return this._visualEngine;
+    }
+    get fpsCounter() {
+        return this._fpsCounter;
     }
     get editedBody() {
         return this._editedBody;
@@ -331,12 +377,13 @@ class Playground {
 function draw(playground) {
     playground.physicalEngine.update();
     playground.context.fillStyle = "black";
-    playground.context.fillRect(0, 0, window.screen.width, window.screen.height);
+    playground.context.fillRect(0, 0, playground.canvas.width, playground.canvas.height);
     playground.physicalEngine.bodyies.forEach((body) => {
         playground.visualEngine.drawBody(body);
         playground.visualEngine.drawVelocity(body);
         playground.visualEngine.drawPath(body);
     });
+    playground.visualEngine.drawFps(playground.fpsCounter);
     if (playground.editedBody) {
         playground.visualEngine.drawBody(playground.editedBody);
         playground.visualEngine.drawPath(playground.editedBody);
@@ -349,7 +396,7 @@ function addBodyMass(playground) {
 }
 function mouseDownHandler(playground) {
     return (function (event) {
-        this.editedBody = new PhysicalBody(new DOMPoint(event.offsetX - playground.visualEngine.offset.x, event.offsetY - playground.visualEngine.offset.y), 0, new BodyParameters());
+        this.editedBody = new PhysicalBody(new DOMPoint(event.offsetX - playground.visualEngine.offset.x, event.offsetY - playground.visualEngine.offset.y), PhysicalEngine.weightUnit, new BodyParameters());
         this.addEventListener("update", addBodyMass);
     }).bind(playground);
 }
@@ -374,19 +421,28 @@ function mouseUpHandler(playground) {
         }
     }).bind(playground);
 }
+function resizeHandler(playground) {
+    return (function () {
+        playground.canvas.width = window.innerWidth;
+        playground.canvas.height = window.innerHeight;
+        playground.visualEngine.offset = new DOMPoint(playground.canvas.width / 2, playground.canvas.height / 2);
+    }).bind(playground);
+}
 window.onload = () => {
     const physicalEngine = new PhysicalEngine([new PhysicalBody(new DOMPoint(0, 0), 20e15, new BodyParameters()), new PhysicalBody(new DOMPoint(200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, 100), new DOMPoint())), new PhysicalBody(new DOMPoint(-200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, -100), new DOMPoint()))]);
     const canvas = document.getElementById("cnvs");
     const context = canvas?.getContext("2d");
-    canvas.width = window.screen.availWidth;
-    canvas.height = window.screen.availHeight;
     if (context) {
-        const visualEngine = new VisualEngine(context, new DOMPoint(window.screen.availWidth / 2, window.screen.availHeight / 2));
+        const visualEngine = new VisualEngine(context, new DOMPoint());
         const playground = new Playground(canvas, context, physicalEngine, visualEngine);
+        const onResize = resizeHandler(playground);
+        playground.addEventListener("update", playground.fpsCounter.tick.bind(playground.fpsCounter));
         playground.addEventListener("update", draw);
         canvas.addEventListener("mousedown", mouseDownHandler(playground));
         canvas.addEventListener("mousemove", mouseMoveHandler(playground));
         canvas.addEventListener("mouseup", mouseUpHandler(playground));
+        window.addEventListener("resize", onResize);
+        onResize();
     }
 };
 //# sourceMappingURL=app.js.map

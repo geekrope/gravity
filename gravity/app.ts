@@ -352,9 +352,11 @@ class PhysicalEngine
 
 class VisualEngine
 {
+	private readonly _emptyMatrix = new DOMMatrixReadOnly([1, 0, 0, 1, 0, 0]);
 	private _context: CanvasRenderingContext2D;
-	private _transform: DOMMatrix;
-	private readonly _offset: DOMPoint;
+	private _transform: DOMMatrixReadOnly;
+	private _renderTransform: DOMMatrixReadOnly;
+	private _offset: DOMPoint;
 
 	public get context(): CanvasRenderingContext2D
 	{
@@ -364,19 +366,29 @@ class VisualEngine
 	{
 		return this._offset as DOMPointReadOnly;
 	}
-	public get transform(): DOMMatrix
+	public get renderTransform(): DOMMatrixReadOnly
 	{
-		return this._transform;
+		return this._renderTransform;
 	}
 
-	public set transform(value: DOMMatrix)
+	public set transform(value: DOMMatrixReadOnly)
 	{
 		this._transform = value;
+		this._renderTransform = this.evaluateRenderTransform();
+	}
+	public set offset(value: DOMPointReadOnly)
+	{
+		this._offset = value;
+		this._renderTransform = this.evaluateRenderTransform();
 	}
 
+	private evaluateRenderTransform(): DOMMatrixReadOnly
+	{
+		return this._transform.translate(this._offset.x, this._offset.y);
+	}
 	private applyTransform(): void
 	{
-		this._context.setTransform(this._transform);
+		this._context.setTransform(this._renderTransform);
 	}
 
 	public drawBody(body: PhysicalBody)
@@ -442,12 +454,61 @@ class VisualEngine
 
 		this._context.restore();
 	}
+	public drawFps(fpsCounter: FpsCounter)
+	{
+		this._context.save();
+
+		const fontSize = 16;
+		const margin = 8;
+
+		this._context.setTransform(this._emptyMatrix);
+		this._context.fillStyle = "white";
+		this._context.font = `${fontSize}px serif`;
+		this._context.textBaseline = "top";
+		this._context.textAlign = "left";
+
+		this._context.fillText(fpsCounter.fps.toString(), margin, margin);
+
+		this._context.restore();
+	}
 
 	public constructor(context: CanvasRenderingContext2D, offset: DOMPoint)
 	{
 		this._context = context;
 		this._offset = offset;
-		this._transform = new DOMMatrix([1, 0, 0, 1, offset.x, offset.y]);
+		this._transform = this._emptyMatrix;
+		this._renderTransform = this.evaluateRenderTransform();
+	}
+}
+
+class FpsCounter
+{
+	private _timeOffset: number
+	private _frames: number;
+	private _fps: number;
+
+	public get fps(): number
+	{
+		return this._fps;
+	}
+
+	public tick()
+	{
+		if (Date.now() - this._timeOffset > 1000)
+		{
+			this._fps = this._frames;
+			this._frames = 0;
+			this._timeOffset = Date.now();
+		}
+
+		this._frames++;
+	}
+
+	public constructor()
+	{
+		this._timeOffset = Date.now();
+		this._frames = 0;
+		this._fps = 0;
 	}
 }
 
@@ -461,6 +522,7 @@ class Playground
 	private readonly _context: CanvasRenderingContext2D;
 	private readonly _physicalEngine: PhysicalEngine;
 	private readonly _visualEngine: VisualEngine;
+	private readonly _fpsCounter: FpsCounter;
 
 	public get canvas(): HTMLCanvasElement
 	{
@@ -477,6 +539,10 @@ class Playground
 	public get visualEngine(): VisualEngine
 	{
 		return this._visualEngine;
+	}
+	public get fpsCounter(): FpsCounter
+	{
+		return this._fpsCounter;
 	}
 	public get editedBody(): PhysicalBody | undefined
 	{
@@ -514,6 +580,7 @@ class Playground
 		this._context = context;
 		this._physicalEngine = physicalEngine;
 		this._visualEngine = visualEngine;
+		this._fpsCounter = new FpsCounter();
 		this._onUpdate = [];
 
 		setInterval(() =>
@@ -530,20 +597,22 @@ function draw(playground: Playground)
 {
 	playground.physicalEngine.update();
 	playground.context.fillStyle = "black";
-	playground.context.fillRect(0, 0, window.screen.width, window.screen.height);
+	playground.context.fillRect(0, 0, playground.canvas.width, playground.canvas.height);
 
 	playground.physicalEngine.bodyies.forEach((body) =>
 	{
 		playground.visualEngine.drawBody(body);
 		playground.visualEngine.drawVelocity(body);
 		playground.visualEngine.drawPath(body);
-	});
+	});	
 
 	if (playground.editedBody)
 	{
 		playground.visualEngine.drawBody(playground.editedBody);
 		playground.visualEngine.drawPath(playground.editedBody);
 	}
+
+	playground.visualEngine.drawFps(playground.fpsCounter);
 }
 function addBodyMass(playground: Playground)
 {
@@ -556,7 +625,7 @@ function mouseDownHandler(playground: Playground): (event: MouseEvent) => void
 {
 	return (function (this: typeof playground, event: MouseEvent)
 	{
-		this.editedBody = new PhysicalBody(new DOMPoint(event.offsetX - playground.visualEngine.offset.x, event.offsetY - playground.visualEngine.offset.y), 0, new BodyParameters());
+		this.editedBody = new PhysicalBody(new DOMPoint(event.offsetX - playground.visualEngine.offset.x, event.offsetY - playground.visualEngine.offset.y), PhysicalEngine.weightUnit, new BodyParameters());
 		this.addEventListener("update", addBodyMass);
 	}).bind(playground);
 }
@@ -589,6 +658,16 @@ function mouseUpHandler(playground: Playground): (event: MouseEvent) => void
 		}
 	}).bind(playground);
 }
+function resizeHandler(playground: Playground): () => void
+{
+	return (function (this: typeof playground)
+	{
+		playground.canvas.width = window.innerWidth;
+		playground.canvas.height = window.innerHeight;
+
+		playground.visualEngine.offset = new DOMPoint(playground.canvas.width / 2, playground.canvas.height / 2);
+	}).bind(playground);
+}
 
 window.onload = () =>
 {
@@ -596,18 +675,20 @@ window.onload = () =>
 	const canvas = <HTMLCanvasElement>document.getElementById("cnvs");
 	const context = canvas?.getContext("2d");
 
-	canvas.width = window.screen.availWidth;
-	canvas.height = window.screen.availHeight;
-
 	if (context)
 	{
-		const visualEngine = new VisualEngine(context, new DOMPoint(window.screen.availWidth / 2, window.screen.availHeight / 2));
+		const visualEngine = new VisualEngine(context, new DOMPoint());
 		const playground = new Playground(canvas, context, physicalEngine, visualEngine);
+		const onResize = resizeHandler(playground);
 
+		playground.addEventListener("update", playground.fpsCounter.tick.bind(playground.fpsCounter));
 		playground.addEventListener("update", draw);
 
 		canvas.addEventListener("mousedown", mouseDownHandler(playground));
 		canvas.addEventListener("mousemove", mouseMoveHandler(playground));
 		canvas.addEventListener("mouseup", mouseUpHandler(playground));
+		window.addEventListener("resize", onResize);
+
+		onResize();
 	}
 }
