@@ -357,6 +357,7 @@ class VisualEngine
 	private _transform: DOMMatrixReadOnly;
 	private _renderTransform: DOMMatrixReadOnly;
 	private _offset: DOMPoint;
+	private _planet: HTMLImageElement;
 
 	public get context(): CanvasRenderingContext2D
 	{
@@ -390,18 +391,33 @@ class VisualEngine
 	{
 		this._context.setTransform(this._renderTransform);
 	}
-
-	public drawBody(body: PhysicalBody)
+	private drawBodySprite(body: PhysicalBody)
 	{
 		this._context.save();
 		this.applyTransform();
-		this._context.fillStyle = "white";
-		this._context.strokeStyle = "black";
-		this._context.beginPath();
-		this._context.arc(body.position.x, body.position.y, Math.log(body.mass / PhysicalEngine.weightUnit + Math.E) / Math.LOG2E * 25, 0, Math.PI * 2);
-		this._context.fill();
-		this._context.stroke();
+
+		const size = Math.log(body.mass / PhysicalEngine.weightUnit + Math.E) / Math.LOG2E * 50;
+		const width = size;
+		const height = this._planet.height / this._planet.width * width;
+
+		this.context.drawImage(this._planet, body.position.x - width / 2, body.position.y - height / 2, width, height);
+
 		this._context.restore();
+	}
+
+	public drawBody(body: PhysicalBody)
+	{
+		if (this._planet.complete)
+		{
+			this.drawBodySprite(body);
+		}
+		else
+		{
+			this._planet.onload = () =>
+			{
+				this.drawBodySprite(body);
+			}
+		}
 	}
 	public drawVelocity(body: PhysicalBody)
 	{
@@ -416,7 +432,7 @@ class VisualEngine
 		const arrowEnd_1 = new DOMPoint(vectorEnd.x - Math.cos(vectorAngle - arrowAngle) * arrowSize, vectorEnd.y - Math.sin(vectorAngle - arrowAngle) * arrowSize);
 		const arrowEnd_2 = new DOMPoint(vectorEnd.x - Math.cos(vectorAngle + arrowAngle) * arrowSize, vectorEnd.y - Math.sin(vectorAngle + arrowAngle) * arrowSize);
 
-		this._context.strokeStyle = "red";
+		this._context.strokeStyle = "lime";
 
 		this._context.beginPath();
 
@@ -472,12 +488,93 @@ class VisualEngine
 		this._context.restore();
 	}
 
-	public constructor(context: CanvasRenderingContext2D, offset: DOMPoint)
+	public constructor(context: CanvasRenderingContext2D, offset: DOMPoint, bodySprite: string)
 	{
 		this._context = context;
 		this._offset = offset;
 		this._transform = this._emptyMatrix;
 		this._renderTransform = this.evaluateRenderTransform();
+		this._planet = new Image();
+
+		this._planet.src = bodySprite;
+	}
+}
+
+class Oscillator
+{
+	private _volume: number;
+	private _frequency: number;
+	private _oscillatorType: OscillatorType;
+	private _audioContext: AudioContext;
+	private _oscillatorNode: OscillatorNode;
+	private _gainNode: GainNode;
+
+	public get volume(): number
+	{
+		return this._volume;
+	}
+	public get frequency(): number
+	{
+		return this._frequency;
+	}
+	public get oscillatorType(): OscillatorType
+	{
+		return this._oscillatorType;
+	}
+	public get audioContext(): AudioContext
+	{
+		return this._audioContext;
+	}
+	public get oscillatorNode(): OscillatorNode
+	{
+		return this._oscillatorNode;
+	}
+	public get gainNode(): GainNode
+	{
+		return this._gainNode;
+	}
+
+	public set volume(value: number)
+	{
+		this._volume = value;
+		this._gainNode.gain.value = value;
+	}
+	public set frequency(value: number)
+	{
+		this._frequency = value;
+		this._oscillatorNode.frequency.value = value;
+	}
+	public set oscillatorType(value: OscillatorType)
+	{
+		this._oscillatorType = value;
+		this._oscillatorNode.type = value;
+	}
+
+	public start(): void
+	{
+		this._oscillatorNode.start();
+	}
+	public stop(): void
+	{
+		this._oscillatorNode.stop();
+	}
+
+	public constructor(volume: number, frequency: number, type: OscillatorType)
+	{
+		this._volume = volume;
+		this._frequency = frequency;
+		this._oscillatorType = type;
+
+		this._audioContext = new AudioContext();
+		this._oscillatorNode = new OscillatorNode(this._audioContext);
+		this._gainNode = new GainNode(this._audioContext);
+
+		this._oscillatorNode.type = this._oscillatorType;
+		this._oscillatorNode.frequency.value = this._frequency;
+		this._gainNode.gain.value = this._volume;
+
+		this._oscillatorNode.connect(this._gainNode);
+		this._gainNode.connect(this._audioContext.destination);
 	}
 }
 
@@ -523,6 +620,7 @@ class Playground
 	private readonly _physicalEngine: PhysicalEngine;
 	private readonly _visualEngine: VisualEngine;
 	private readonly _fpsCounter: FpsCounter;
+	private _oscillator?: Oscillator;
 
 	public get canvas(): HTMLCanvasElement
 	{
@@ -544,11 +642,19 @@ class Playground
 	{
 		return this._fpsCounter;
 	}
+	public get oscillator(): Oscillator | undefined
+	{
+		return this._oscillator;
+	}
 	public get editedBody(): PhysicalBody | undefined
 	{
 		return this._editedBody;
 	}
 
+	public set oscillator(value: Oscillator | undefined)
+	{
+		this._oscillator = value;
+	}
 	public set editedBody(value: PhysicalBody | undefined)
 	{
 		this._editedBody = value;
@@ -604,7 +710,7 @@ function draw(playground: Playground)
 		playground.visualEngine.drawBody(body);
 		playground.visualEngine.drawVelocity(body);
 		playground.visualEngine.drawPath(body);
-	});	
+	});
 
 	if (playground.editedBody)
 	{
@@ -619,6 +725,11 @@ function addBodyMass(playground: Playground)
 	if (playground.editedBody)
 	{
 		playground.editedBody.mass += PhysicalEngine.weightUnit / 50;
+
+		if (playground.oscillator)
+		{
+			playground.oscillator.frequency = Math.min(1000, playground.oscillator.frequency + 1);
+		}
 	}
 }
 function mouseDownHandler(playground: Playground): (event: MouseEvent) => void
@@ -627,6 +738,17 @@ function mouseDownHandler(playground: Playground): (event: MouseEvent) => void
 	{
 		this.editedBody = new PhysicalBody(new DOMPoint(event.offsetX - playground.visualEngine.offset.x, event.offsetY - playground.visualEngine.offset.y), PhysicalEngine.weightUnit, new BodyParameters());
 		this.addEventListener("update", addBodyMass);
+
+		if (this.oscillator)
+		{
+			this.oscillator.oscillatorNode.disconnect();
+			this.oscillator.gainNode.disconnect();
+		}
+
+		this.oscillator = new Oscillator(0, 200, "square");
+		this.oscillator.oscillatorNode.detune.value = 1;
+		this.oscillator.start();
+		this.oscillator.gainNode.gain.linearRampToValueAtTime(0.3, this.oscillator.audioContext.currentTime + 1);
 	}).bind(playground);
 }
 function mouseMoveHandler(playground: Playground): (event: MouseEvent) => void
@@ -655,6 +777,8 @@ function mouseUpHandler(playground: Playground): (event: MouseEvent) => void
 			this.physicalEngine.bodyies.push(this.editedBody);
 			this.removeEventListener("update", addBodyMass);
 			this.editedBody = undefined;
+
+			this.oscillator?.stop();
 		}
 	}).bind(playground);
 }
@@ -677,7 +801,7 @@ window.onload = () =>
 
 	if (context)
 	{
-		const visualEngine = new VisualEngine(context, new DOMPoint());
+		const visualEngine = new VisualEngine(context, new DOMPoint(), "/planet.svg");
 		const playground = new Playground(canvas, context, physicalEngine, visualEngine);
 		const onResize = resizeHandler(playground);
 

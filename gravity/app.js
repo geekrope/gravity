@@ -102,9 +102,7 @@ class PhysicalBody {
         this._position = position;
     }
     set mass(mass) {
-        if (mass != 0) {
-            this._mass = mass;
-        }
+        this._mass = mass;
     }
     set parameters(parameters) {
         this._parameters = parameters;
@@ -219,12 +217,14 @@ class PhysicalEngine {
 PhysicalEngine.timeUnit = 1000;
 PhysicalEngine.weightUnit = 1e15;
 class VisualEngine {
-    constructor(context, offset) {
+    constructor(context, offset, bodySprite) {
         this._emptyMatrix = new DOMMatrixReadOnly([1, 0, 0, 1, 0, 0]);
         this._context = context;
         this._offset = offset;
         this._transform = this._emptyMatrix;
         this._renderTransform = this.evaluateRenderTransform();
+        this._planet = new Image();
+        this._planet.src = bodySprite;
     }
     get context() {
         return this._context;
@@ -249,16 +249,24 @@ class VisualEngine {
     applyTransform() {
         this._context.setTransform(this._renderTransform);
     }
-    drawBody(body) {
+    drawBodySprite(body) {
         this._context.save();
         this.applyTransform();
-        this._context.fillStyle = "white";
-        this._context.strokeStyle = "black";
-        this._context.beginPath();
-        this._context.arc(body.position.x, body.position.y, Math.log(body.mass / PhysicalEngine.weightUnit + Math.E) / Math.LOG2E * 25, 0, Math.PI * 2);
-        this._context.fill();
-        this._context.stroke();
+        const size = Math.log(body.mass / PhysicalEngine.weightUnit + Math.E) / Math.LOG2E * 50;
+        const width = size;
+        const height = /*this._planet.height / this._planet.width * width*/ size;
+        this.context.drawImage(this._planet, body.position.x - width / 2, body.position.y - height / 2, width, height);
         this._context.restore();
+    }
+    drawBody(body) {
+        if (this._planet.complete) {
+            this.drawBodySprite(body);
+        }
+        else {
+            this._planet.onload = () => {
+                this.drawBodySprite(body);
+            };
+        }
     }
     drawVelocity(body) {
         this._context.save();
@@ -270,7 +278,7 @@ class VisualEngine {
         const vectorAngle = Math.atan2(vectorEnd.y - vectorStart.y, vectorEnd.x - vectorStart.x);
         const arrowEnd_1 = new DOMPoint(vectorEnd.x - Math.cos(vectorAngle - arrowAngle) * arrowSize, vectorEnd.y - Math.sin(vectorAngle - arrowAngle) * arrowSize);
         const arrowEnd_2 = new DOMPoint(vectorEnd.x - Math.cos(vectorAngle + arrowAngle) * arrowSize, vectorEnd.y - Math.sin(vectorAngle + arrowAngle) * arrowSize);
-        this._context.strokeStyle = "red";
+        this._context.strokeStyle = "lime";
         this._context.beginPath();
         this._context.moveTo(vectorStart.x, vectorStart.y);
         this._context.lineTo(vectorEnd.x, vectorEnd.y);
@@ -306,6 +314,57 @@ class VisualEngine {
         this._context.textAlign = "left";
         this._context.fillText(fpsCounter.fps.toString(), margin, margin);
         this._context.restore();
+    }
+}
+class Oscillator {
+    constructor(volume, frequency, type) {
+        this._volume = volume;
+        this._frequency = frequency;
+        this._oscillatorType = type;
+        this._audioContext = new AudioContext();
+        this._oscillatorNode = new OscillatorNode(this._audioContext);
+        this._gainNode = new GainNode(this._audioContext);
+        this._oscillatorNode.type = this._oscillatorType;
+        this._oscillatorNode.frequency.value = this._frequency;
+        this._gainNode.gain.value = this._volume;
+        this._oscillatorNode.connect(this._gainNode);
+        this._gainNode.connect(this._audioContext.destination);
+    }
+    get volume() {
+        return this._volume;
+    }
+    get frequency() {
+        return this._frequency;
+    }
+    get oscillatorType() {
+        return this._oscillatorType;
+    }
+    get audioContext() {
+        return this._audioContext;
+    }
+    get oscillatorNode() {
+        return this._oscillatorNode;
+    }
+    get gainNode() {
+        return this._gainNode;
+    }
+    set volume(value) {
+        this._volume = value;
+        this._gainNode.gain.value = value;
+    }
+    set frequency(value) {
+        this._frequency = value;
+        this._oscillatorNode.frequency.value = value;
+    }
+    set oscillatorType(value) {
+        this._oscillatorType = value;
+        this._oscillatorNode.type = value;
+    }
+    start() {
+        this._oscillatorNode.start();
+    }
+    stop() {
+        this._oscillatorNode.stop();
     }
 }
 class FpsCounter {
@@ -355,8 +414,14 @@ class Playground {
     get fpsCounter() {
         return this._fpsCounter;
     }
+    get oscillator() {
+        return this._oscillator;
+    }
     get editedBody() {
         return this._editedBody;
+    }
+    set oscillator(value) {
+        this._oscillator = value;
     }
     set editedBody(value) {
         this._editedBody = value;
@@ -383,21 +448,32 @@ function draw(playground) {
         playground.visualEngine.drawVelocity(body);
         playground.visualEngine.drawPath(body);
     });
-    playground.visualEngine.drawFps(playground.fpsCounter);
     if (playground.editedBody) {
         playground.visualEngine.drawBody(playground.editedBody);
         playground.visualEngine.drawPath(playground.editedBody);
     }
+    playground.visualEngine.drawFps(playground.fpsCounter);
 }
 function addBodyMass(playground) {
     if (playground.editedBody) {
         playground.editedBody.mass += PhysicalEngine.weightUnit / 50;
+        if (playground.oscillator) {
+            playground.oscillator.frequency = Math.min(1000, playground.oscillator.frequency + 1);
+        }
     }
 }
 function mouseDownHandler(playground) {
     return (function (event) {
         this.editedBody = new PhysicalBody(new DOMPoint(event.offsetX - playground.visualEngine.offset.x, event.offsetY - playground.visualEngine.offset.y), PhysicalEngine.weightUnit, new BodyParameters());
         this.addEventListener("update", addBodyMass);
+        if (this.oscillator) {
+            this.oscillator.oscillatorNode.disconnect();
+            this.oscillator.gainNode.disconnect();
+        }
+        this.oscillator = new Oscillator(0, 200, "square");
+        this.oscillator.oscillatorNode.detune.value = 1;
+        this.oscillator.start();
+        this.oscillator.gainNode.gain.linearRampToValueAtTime(0.3, this.oscillator.audioContext.currentTime + 1);
     }).bind(playground);
 }
 function mouseMoveHandler(playground) {
@@ -418,6 +494,7 @@ function mouseUpHandler(playground) {
             this.physicalEngine.bodyies.push(this.editedBody);
             this.removeEventListener("update", addBodyMass);
             this.editedBody = undefined;
+            this.oscillator?.stop();
         }
     }).bind(playground);
 }
@@ -433,7 +510,7 @@ window.onload = () => {
     const canvas = document.getElementById("cnvs");
     const context = canvas?.getContext("2d");
     if (context) {
-        const visualEngine = new VisualEngine(context, new DOMPoint());
+        const visualEngine = new VisualEngine(context, new DOMPoint(), "/planet.svg");
         const playground = new Playground(canvas, context, physicalEngine, visualEngine);
         const onResize = resizeHandler(playground);
         playground.addEventListener("update", playground.fpsCounter.tick.bind(playground.fpsCounter));
