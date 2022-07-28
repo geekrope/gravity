@@ -801,7 +801,7 @@ window.onload = () =>
 
 	if (context)
 	{
-		const visualEngine = new VisualEngine(context, new DOMPoint(), "/planet.svg");
+		const visualEngine = new VisualEngine(context, new DOMPoint(), "resources/planet.svg");
 		const playground = new Playground(canvas, context, physicalEngine, visualEngine);
 		const onResize = resizeHandler(playground);
 

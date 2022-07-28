@@ -254,7 +254,7 @@ class VisualEngine {
         this.applyTransform();
         const size = Math.log(body.mass / PhysicalEngine.weightUnit + Math.E) / Math.LOG2E * 50;
         const width = size;
-        const height = /*this._planet.height / this._planet.width * width*/ size;
+        const height = this._planet.height / this._planet.width * width;
         this.context.drawImage(this._planet, body.position.x - width / 2, body.position.y - height / 2, width, height);
         this._context.restore();
     }
@@ -510,7 +510,7 @@ window.onload = () => {
     const canvas = document.getElementById("cnvs");
     const context = canvas?.getContext("2d");
     if (context) {
-        const visualEngine = new VisualEngine(context, new DOMPoint(), "/planet.svg");
+        const visualEngine = new VisualEngine(context, new DOMPoint(), "resources/planet.svg");
         const playground = new Playground(canvas, context, physicalEngine, visualEngine);
         const onResize = resizeHandler(playground);
         playground.addEventListener("update", playground.fpsCounter.tick.bind(playground.fpsCounter));
