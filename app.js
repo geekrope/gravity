@@ -148,7 +148,8 @@ class PhysicalEngine {
     }
     computeForce(influencedBody) {
         const formula = (mass1, mass2, distance) => {
-            return this.G * mass1 * mass2 / (distance * distance);
+            const safeDistance = Math.max(1e-9, distance);
+            return this.G * mass1 * mass2 / (safeDistance * safeDistance);
         };
         const influencedBodyIndex = this.getBodyIndex(influencedBody);
         if (influencedBodyIndex != -1) {
@@ -393,6 +394,7 @@ class Playground {
         this._visualEngine = visualEngine;
         this._fpsCounter = new FpsCounter();
         this._onUpdate = [];
+        this._highPerformance = false;
         setInterval(() => {
             this._onUpdate.forEach((handler) => {
                 handler(this);
@@ -420,11 +422,17 @@ class Playground {
     get editedBody() {
         return this._editedBody;
     }
+    get highPerformance() {
+        return this._highPerformance;
+    }
     set oscillator(value) {
         this._oscillator = value;
     }
     set editedBody(value) {
         this._editedBody = value;
+    }
+    set highPerformance(value) {
+        this._highPerformance = value;
     }
     addEventListener(type, handler) {
         switch (type) {
@@ -445,12 +453,16 @@ function draw(playground) {
     playground.context.fillRect(0, 0, playground.canvas.width, playground.canvas.height);
     playground.physicalEngine.bodyies.forEach((body) => {
         playground.visualEngine.drawBody(body);
-        playground.visualEngine.drawVelocity(body);
-        playground.visualEngine.drawPath(body);
+        if (!playground.highPerformance) {
+            playground.visualEngine.drawVelocity(body);
+            playground.visualEngine.drawPath(body);
+        }
     });
     if (playground.editedBody) {
         playground.visualEngine.drawBody(playground.editedBody);
-        playground.visualEngine.drawPath(playground.editedBody);
+        if (!playground.highPerformance) {
+            playground.visualEngine.drawPath(playground.editedBody);
+        }
     }
     playground.visualEngine.drawFps(playground.fpsCounter);
 }
@@ -513,6 +525,10 @@ window.onload = () => {
         const visualEngine = new VisualEngine(context, new DOMPoint(), "resources/planet.svg");
         const playground = new Playground(canvas, context, physicalEngine, visualEngine);
         const onResize = resizeHandler(playground);
+        const performanceCheckbox = document.getElementById("performance");
+        const highPerformanceCheckHandler = () => { playground.highPerformance = performanceCheckbox.checked; };
+        performanceCheckbox?.addEventListener("change", highPerformanceCheckHandler);
+        highPerformanceCheckHandler();
         playground.addEventListener("update", playground.fpsCounter.tick.bind(playground.fpsCounter));
         playground.addEventListener("update", draw);
         canvas.addEventListener("mousedown", mouseDownHandler(playground));

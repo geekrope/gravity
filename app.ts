@@ -245,7 +245,8 @@ class PhysicalEngine
 	{
 		const formula = (mass1: number, mass2: number, distance: number) =>
 		{
-			return this.G * mass1 * mass2 / (distance * distance);
+			const safeDistance = Math.max(1e-9, distance);
+			return this.G * mass1 * mass2 / (safeDistance * safeDistance);
 		}
 
 		const influencedBodyIndex = this.getBodyIndex(influencedBody);
@@ -615,6 +616,7 @@ class Playground
 {
 	private _editedBody?: PhysicalBody;
 	private _onUpdate: ((playground: this) => void)[];
+	private _highPerformance: boolean;
 	private readonly _canvas: HTMLCanvasElement;
 	private readonly _context: CanvasRenderingContext2D;
 	private readonly _physicalEngine: PhysicalEngine;
@@ -650,6 +652,10 @@ class Playground
 	{
 		return this._editedBody;
 	}
+	public get highPerformance(): boolean
+	{
+		return this._highPerformance;
+	}
 
 	public set oscillator(value: Oscillator | undefined)
 	{
@@ -658,6 +664,10 @@ class Playground
 	public set editedBody(value: PhysicalBody | undefined)
 	{
 		this._editedBody = value;
+	}
+	public set highPerformance(value: boolean)
+	{
+		this._highPerformance = value;
 	}
 
 	public addEventListener(type: "update", handler: (playground: this) => void): void
@@ -688,6 +698,7 @@ class Playground
 		this._visualEngine = visualEngine;
 		this._fpsCounter = new FpsCounter();
 		this._onUpdate = [];
+		this._highPerformance = false;
 
 		setInterval(() =>
 		{
@@ -708,14 +719,22 @@ function draw(playground: Playground)
 	playground.physicalEngine.bodyies.forEach((body) =>
 	{
 		playground.visualEngine.drawBody(body);
-		playground.visualEngine.drawVelocity(body);
-		playground.visualEngine.drawPath(body);
+
+		if (!playground.highPerformance)
+		{
+			playground.visualEngine.drawVelocity(body);
+			playground.visualEngine.drawPath(body);
+		}
 	});
 
 	if (playground.editedBody)
 	{
 		playground.visualEngine.drawBody(playground.editedBody);
-		playground.visualEngine.drawPath(playground.editedBody);
+
+		if (!playground.highPerformance)
+		{
+			playground.visualEngine.drawPath(playground.editedBody);
+		}
 	}
 
 	playground.visualEngine.drawFps(playground.fpsCounter);
@@ -797,6 +816,7 @@ window.onload = () =>
 {
 	const physicalEngine = new PhysicalEngine([new PhysicalBody(new DOMPoint(0, 0), 20e15, new BodyParameters()), new PhysicalBody(new DOMPoint(200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, 100), new DOMPoint())), new PhysicalBody(new DOMPoint(-200, 0), 1e15, new BodyParameters(new DOMPoint(), new DOMPoint(), new DOMPoint(0, -100), new DOMPoint()))]);
 	const canvas = <HTMLCanvasElement>document.getElementById("cnvs");
+
 	const context = canvas?.getContext("2d");
 
 	if (context)
@@ -804,6 +824,12 @@ window.onload = () =>
 		const visualEngine = new VisualEngine(context, new DOMPoint(), "resources/planet.svg");
 		const playground = new Playground(canvas, context, physicalEngine, visualEngine);
 		const onResize = resizeHandler(playground);
+
+		const performanceCheckbox = <HTMLInputElement>document.getElementById("performance");
+		const highPerformanceCheckHandler = () => { playground.highPerformance = performanceCheckbox.checked; };
+
+		performanceCheckbox?.addEventListener("change", highPerformanceCheckHandler);
+		highPerformanceCheckHandler();
 
 		playground.addEventListener("update", playground.fpsCounter.tick.bind(playground.fpsCounter));
 		playground.addEventListener("update", draw);
